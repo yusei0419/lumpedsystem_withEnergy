@@ -105,18 +105,37 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     # Base parameters shared across lambda values.
+    #
+    # Stress-based parameterization:
+    #   E0     = 2e5 MPa (typical metal)
+    #   sigma0 = 20 MPa  (per-bar reference stress at D = 0)
+    #   r      = 1 mm    (cylinder radius -> A = pi r^2 = pi mm^2)
+    #   F_series = sigma0 * A; F_parallel_total = 2 sigma0 * A.
+    #
+    # Energy scale at the undamaged state:
+    #   psi_mech_0 = sigma0^2 / (2 E0) = 1e-3 MPa.
+    # alpha = 100 makes the natural damage rate ~ alpha * psi_mech_0 = 0.1 / time,
+    # so D evolves on O(10) time units and T = 200 is comfortable.
+    #
+    # Single-bar equilibrium under stress control (eps = sigma0 / ((1-D) E0)):
+    #   D (1 - D)^2 = sigma0^2 / (2 E0 lambda) = 1e-3 / lambda.
+    # The function D(1-D)^2 peaks at D = 1/3 with value 4/27 ~ 0.148, so a real
+    # fixed point exists only for lambda >= 1e-3 / (4/27) ~ 6.75e-3.
+    #   lambda = 1e-3  -> RHS = 1.0  > 0.148 -> no real fixed point, runaway
+    #   lambda = 1e-2  -> RHS = 0.1  -> bistable: D ~ 0.133 (stable), ~ 0.781 (unstable)
+    #   lambda = 1e-1  -> RHS = 0.01 -> bistable: D ~ 0.0102 (stable), ~ 0.9395 (unstable)
     base_params = Params(
-        E0=1.0, A=1.0, L=1.0,
-        b=1.0, alpha=1.0,
-        control="force", F0=0.4,
+        E0=2.0e5, r=1.0, L=1.0,
+        b=1.0, alpha=100.0,
+        control="stress", sigma0=20.0,
         D_max=0.99, D_min=0.0,
         D_grid=np.round(np.arange(0.0, 0.95, 0.1), 3),
     )
 
-    # Sweep repair stiffness values.
-    lambda_values = [0.1, 1.0, 10.0]
+    # Sweep repair stiffness values [MPa].
+    lambda_values = [1.0e-3, 1.0e-2, 1.0e-1]
     t_span = (0.0, 200.0)
-    n_eval = 201
+    n_eval = 401
 
     # Aggregate results keyed by mode and lambda.
     all_results: dict[str, dict[str, list]] = {"series": {}, "parallel": {}}
@@ -133,9 +152,11 @@ def main():
     # Store metadata + trajectories for post-processing.
     meta = {
         "params": {
-            "E0": base_params.E0, "A": base_params.A, "L": base_params.L,
+            "E0": base_params.E0, "r": base_params.r, "A": base_params.A, "L": base_params.L,
             "b": base_params.b, "alpha": base_params.alpha,
-            "control": base_params.control, "F0": base_params.F0,
+            "control": base_params.control, "sigma0": base_params.sigma0,
+            "F_series": base_params.F_series,
+            "F_parallel_total": base_params.F_parallel_total,
             "D_max": base_params.D_max, "D_min": base_params.D_min,
             "D_grid": base_params.D_grid.tolist(),
             "t_span": list(t_span),

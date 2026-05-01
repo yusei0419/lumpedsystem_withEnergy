@@ -58,8 +58,8 @@ def build_phase_html(meta: dict[str, Any], out_path: str) -> None:
     fig = make_subplots(
         rows=1, cols=2,
         subplot_titles=(
-            f"Series  (force control, F0={params['F0']})",
-            f"Parallel (force control, F_total=2*F0={2*params['F0']})",
+            f"Series  (stress control, σ0={params['sigma0']} MPa, F={params['F_series']:.3f} N)",
+            f"Parallel (stress control, σ0={params['sigma0']} MPa, F_total={params['F_parallel_total']:.3f} N)",
         ),
         horizontal_spacing=0.12,
     )
@@ -149,7 +149,8 @@ def build_phase_html(meta: dict[str, Any], out_path: str) -> None:
 def _title(params: dict[str, Any], lam: float) -> str:
     return (
         f"Two-bar bone remodeling — phase portrait (D1, D2) "
-        f"&nbsp;|&nbsp; λ = {lam} "
+        f"&nbsp;|&nbsp; λ = {lam} MPa "
         f"&nbsp;|&nbsp; α={params['alpha']}, b={params['b']}, "
-        f"E0={params['E0']}, F0={params['F0']}"
+        f"E0={params['E0']:.1e} MPa, σ0={params['sigma0']} MPa, "
+        f"r={params['r']} mm (A={params['A']:.3f} mm²)"
     )

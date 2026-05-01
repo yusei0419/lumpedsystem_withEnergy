@@ -50,64 +50,91 @@ Jr_i  = alpha * lambda b^2 D_i           (repair / suppression)
 dD_i/dt = Jd_i - Jr_i = alpha Yd_i
 ```
 
-Mechanical conditions (force control is the default):
+Mechanical conditions (stress control is the default):
 
-* **Series**, F1 = F2 = F0:
-  `eps_i = F0 / ((1 - D_i) E0 A)`
-* **Parallel**, F_total = 2 F0:
-  `eps1 = eps2 = 2 F0 / ((2 - D1 - D2) E0 A)`
+The bars are circular cylinders of radius `r`, so `A = π r²`. Loading is
+specified by a per-bar reference stress `σ0` that each bar would experience
+if undamaged:
 
-The factor 2 in the parallel total force makes the per-bar load match the
-series case at D1 = D2 = 0, so the two phase portraits are directly comparable.
+* **Series**, F1 = F2 = σ0 · A:
+  `eps_i = σ0 / ((1 - D_i) E0)`
+* **Parallel**, F_total = 2 · σ0 · A:
+  `eps1 = eps2 = 2 σ0 / ((2 - D1 - D2) E0)`
+
+The factor 2 in the parallel total force is *not* arbitrary — it is the
+direct consequence of requiring per-bar stress = σ0 at the undamaged state
+in both configurations. This makes the two phase portraits directly comparable.
 
 ## Parameters (in `simulate_two_bar_remodeling.py::main`)
 
-| Symbol | Code           | Default | Meaning                                   |
-|--------|----------------|---------|-------------------------------------------|
-| E0     | `Params.E0`    | 1.0     | base Young modulus                        |
-| A      | `Params.A`     | 1.0     | cross-section                             |
-| L      | `Params.L`     | 1.0     | bar length                                |
-| b      | `Params.b`     | 1.0     | sensitivity in `c_i = b D_i + const`      |
-| α      | `Params.alpha` | 1.0     | kinetic rate for `dD/dt`                  |
-| F0     | `Params.F0`    | 0.4     | reference force; series uses F0, parallel uses 2 F0 |
-| λ      | `Params.lam`   | swept   | repair stiffness; sweep `[0.1, 1.0, 10.0]`|
-| D_max  | `Params.D_max` | 0.99    | hard cap to keep `(1-D) E0` from vanishing|
-| D_min  | `Params.D_min` | 0.0     | lower bound on D                          |
-| grid   | `Params.D_grid`| 0.0…0.9 (step 0.1) | initial-condition grid for D1, D2 |
-| T      | `t_span`       | (0, 200)| integration window                        |
+| Symbol | Code             | Default     | Units | Meaning                                   |
+|--------|------------------|-------------|-------|-------------------------------------------|
+| E0     | `Params.E0`      | 2.0e5       | MPa   | undamaged Young modulus                   |
+| r      | `Params.r`       | 1.0         | mm    | cylinder radius                           |
+| A      | `Params.A`       | π·r² = π    | mm²   | cross-section (derived)                   |
+| L      | `Params.L`       | 1.0         | mm    | bar length                                |
+| σ0     | `Params.sigma0`  | 20.0        | MPa   | reference per-bar stress at D=0           |
+| F_series | derived        | σ0·A ≈ 62.83| N     | per-bar force in series                   |
+| F_parallel_total | derived| 2·σ0·A ≈ 125.66 | N | total force in parallel                  |
+| b      | `Params.b`       | 1.0         | -     | sensitivity in `c_i = b D_i + const`      |
+| α      | `Params.alpha`   | 100.0       | 1/(t·MPa) | kinetic rate for `dD/dt`              |
+| λ      | `Params.lam`     | swept       | MPa   | repair stiffness; sweep `[1e-3, 1e-2, 1e-1]` |
+| D_max  | `Params.D_max`   | 0.99        | -     | hard cap to keep `(1-D) E0` from vanishing|
+| D_min  | `Params.D_min`   | 0.0         | -     | lower bound on D                          |
+| grid   | `Params.D_grid`  | 0.0…0.9 (step 0.1) | - | initial-condition grid for D1, D2     |
+| T      | `t_span`         | (0, 200)    | t     | integration window                        |
 
 `solve_ivp` uses RK45, `rtol=1e-6`, `atol=1e-9`, `max_step=1.0`.
 Damage is held at the boundaries by zeroing `dD_i/dt` whenever it would push
 `D_i` past `[D_min, D_max]`.
 
+The energy scale at the undamaged state is
+`ψ_mech_0 = ½ E0 ε0² = σ0² / (2 E0) = 1e-3 MPa`. The choice
+`α = 100` makes the natural damage growth rate `α · ψ_mech_0 ≈ 0.1` per time
+unit, so D evolves on O(10) time units and T = 200 is comfortable.
+
 ## Expected behavior (sanity-check)
 
-Equilibrium of a single bar in force control balances
-`F0^2 / (2 lambda b^2 (1 - D))  =  D`, i.e. `D(1 - D) = F0^2 / (2 lambda)`.
-With `F0 = 0.4`:
+Single-bar equilibrium under stress control:
+`Jd = α σ0² / (2 (1−D)² E0)`, `Jr = α λ b² D`, so
 
-* λ = 0.1: `F0^2 / 2λ = 0.8 > 0.25` → **no real fixed point**, damage runs to D_max
-* λ = 1.0: two roots, `D ≈ 0.087` (stable) and `D ≈ 0.913` (unstable) → **bistable**
-* λ = 10.0: `D ≈ 0.008` (stable) → damage decays everywhere
+```
+D (1 − D)² = σ0² / (2 E0 λ b²)  =  ψ_mech_0 / λ
+```
 
-Observed in the produced HTML:
+(Note the `(1−D)²` in stress control; under force control with fixed F it
+would be `D(1−D)` — the difference is that ε itself depends on D.) The
+function `D(1−D)²` peaks at `D = 1/3` with value `4/27 ≈ 0.148`, so a real
+fixed point exists only when `ψ_mech_0 / λ ≤ 4/27`, i.e. `λ ≥ 6.75e−3`.
+With `σ0 = 20 MPa`, `E0 = 2e5 MPa`, `b = 1`:
 
-| λ    | series end states                                | parallel end states |
-|------|--------------------------------------------------|---------------------|
-| 0.1  | all (0.99, 0.99)                                 | all (0.99, 0.99)    |
-| 1.0  | localizes: e.g. D0=(0.2, 0.7) → (0.098, 0.99)    | homogenizes: (0.098, 0.098) |
-| 10.0 | all (0.008, 0.008)                               | all (0.008, 0.008)  |
+| λ [MPa] | `ψ_mech_0/λ` | predicted fixed point(s) | observed end-state |
+|---------|--------------|---------------------------|--------------------|
+| 1e-3    | 1.0          | none → runaway            | all reach D_max = 0.99 |
+| 1e-2    | 0.1          | D ≈ 0.133 (stable), D ≈ 0.781 (unstable) | bistable, see below |
+| 1e-1    | 0.01         | D ≈ 0.0102 (stable), D ≈ 0.9395 (unstable) | bistable, mostly low |
 
-The bistable regime λ = 1 is where series and parallel differ qualitatively:
-series amplifies asymmetry (load is shared equally → the damaged bar carries
-the same force at lower stiffness → higher strain → more damage), while
-parallel forces equal strain so D1 and D2 evolve toward the same basin.
+Observed in the produced HTML at λ = 1e-2 (bistable regime):
+
+| IC (D1₀, D2₀) | series end | parallel end |
+|---------------|------------|--------------|
+| (0.0, 0.0)    | (0.133, 0.133) | (0.133, 0.133) |
+| (0.4, 0.4)    | (0.133, 0.133) | (0.133, 0.133) |
+| (0.2, 0.7)    | **(0.133, 0.99)** — localizes | (0.133, 0.133) — homogenizes |
+| (0.3, 0.6)    | **(0.133, 0.99)** — localizes | (0.133, 0.133) — homogenizes |
+
+The bistable regime is where series and parallel differ qualitatively:
+in series under stress control the more-damaged bar still carries the
+same force `F = σ0 A` but at lower stiffness `(1−D) E0`, so its strain
+`σ0 / ((1−D) E0)` is larger than the other bar's — driving runaway damage
+on that bar while the partner can heal. In parallel both bars share a
+common strain, so `Jd` is the same for both and the asymmetry decays.
 
 ## Extending
 
 * **Different loading** — pass `control="displacement"` and set `eps_total` in
-  `Params`, or change `F0`. The strain helpers in `two_bar_model.py` already
-  branch on `params.control`.
+  `Params`, or change `sigma0` (per-bar reference stress) / `r` (radius). The
+  strain helpers in `two_bar_model.py` already branch on `params.control`.
 * **More λ values** — extend `lambda_values` in `main`; the slider/buttons
   pick them up automatically.
 * **Different IC grid / time window** — change `Params.D_grid`, `t_span`,

@@ -25,6 +25,7 @@ Background on the repair signal:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -32,25 +33,43 @@ import numpy as np
 
 
 Mode = Literal["series", "parallel"]
-Control = Literal["force", "displacement"]
+Control = Literal["stress", "displacement"]
 
 
 @dataclass
 class Params:
-    # Material / geometry
-    E0: float = 1.0          # base Young modulus
-    A: float = 1.0           # cross-section
-    L: float = 1.0           # length of each bar
+    """
+    Stress-based parameterization.
 
-    # Repair / remodeling
-    lam: float = 1.0         # lambda: repair stiffness
-    b: float = 1.0           # signal sensitivity (c_i = b*D_i + const)
-    alpha: float = 1.0       # kinetic coefficient for dD/dt
+    Loading is specified by a reference stress sigma0 that each bar experiences
+    when undamaged (D = 0). The bars are circular cylinders of radius r, so
+    A = pi * r^2. From this:
+
+        F_series        = sigma0 * A              (each bar carries the same F)
+        F_parallel_total = 2 * sigma0 * A          (two bars in parallel each see sigma0 at D=0)
+
+    Units: SI-ish with stresses/moduli in MPa and lengths in mm.
+        E0     in MPa
+        sigma0 in MPa
+        r, L   in mm
+        A      in mm^2
+        F      in N (= MPa * mm^2)
+    """
+
+    # Material / geometry
+    E0: float = 2.0e5        # base Young modulus [MPa]
+    r: float = 1.0           # cylinder radius [mm]
+    L: float = 1.0           # length of each bar [mm]
 
     # Loading
-    control: Control = "force"
-    F0: float = 0.4          # reference force; series uses F0, parallel uses 2*F0
-    eps_total: float = 0.4   # used only in displacement control (series: 2L*eps_total, parallel: eps)
+    control: Control = "stress"
+    sigma0: float = 20.0     # reference stress on each bar at D=0 [MPa]
+    eps_total: float = 1.0e-4  # used only in displacement control
+
+    # Repair / remodeling
+    lam: float = 1.0e-2      # lambda: repair stiffness [MPa]
+    b: float = 1.0           # signal sensitivity (c_i = b*D_i + const)
+    alpha: float = 100.0     # kinetic coefficient for dD/dt [1/(time*MPa)]
 
     # Numerical safety
     D_max: float = 0.99
@@ -59,6 +78,22 @@ class Params:
 
     # Initial-condition grid
     D_grid: np.ndarray = field(default_factory=lambda: np.round(np.arange(0.0, 0.95, 0.1), 3))
+
+    # ------- derived -------
+    @property
+    def A(self) -> float:
+        """Cross-sectional area of a cylindrical bar: A = pi r^2 [mm^2]."""
+        return math.pi * self.r ** 2
+
+    @property
+    def F_series(self) -> float:
+        """Per-bar force in the series configuration: F = sigma0 * A [N]."""
+        return self.sigma0 * self.A
+
+    @property
+    def F_parallel_total(self) -> float:
+        """Total force in the parallel configuration: F = 2 * sigma0 * A [N]."""
+        return 2.0 * self.sigma0 * self.A
 
 
 def compute_effective_modulus(D: np.ndarray | float, E0: float, E_min_ratio: float = 1e-4) -> np.ndarray:
@@ -71,13 +106,12 @@ def compute_strains_series(D: np.ndarray, params: Params) -> np.ndarray:
     """
     Series: F1 = F2 = F_series, total displacement delta_total = delta_1 + delta_2.
 
-    Force control:
-        F_series = F0
-        eps_i    = F0 / (E_i * A)
+    Stress control (per-bar reference sigma0 at D=0):
+        F_series = sigma0 * A
+        eps_i    = F_series / (E_i * A) = sigma0 / E_i = sigma0 / ((1-D_i) E0)
 
-    Displacement control (total strain eps_total fixed, so delta_total = 2L*eps_total):
-        F_series = (2 L eps_total) / (L/(E1 A) + L/(E2 A))
-                 = 2 eps_total * A / (1/E1 + 1/E2)
+    Displacement control (total strain eps_total fixed, delta_total = 2 L eps_total):
+        F_series = 2 eps_total * A / (1/E1 + 1/E2)
         eps_i    = F_series / (E_i * A)
     """
     # Effective stiffness of each bar after damage.
@@ -85,8 +119,8 @@ def compute_strains_series(D: np.ndarray, params: Params) -> np.ndarray:
     E2 = compute_effective_modulus(D[1], params.E0, params.E_min_ratio)
     A, L = params.A, params.L
 
-    if params.control == "force":
-        F = params.F0
+    if params.control == "stress":
+        F = params.F_series
     else:  # displacement
         delta_total = 2.0 * L * params.eps_total
         compliance = L / (E1 * A) + L / (E2 * A)
@@ -102,12 +136,14 @@ def compute_strains_parallel(D: np.ndarray, params: Params) -> np.ndarray:
     """
     Parallel: eps1 = eps2 = eps_parallel, F_total = F1 + F2.
 
-    To make the parallel case directly comparable to the series case
-    (same per-bar load when D1 = D2 = 0), the total force is set to 2*F0.
+    Stress control: each bar should see stress sigma0 at D = 0, so the total
+    force is the sum of the two reference forces:
+        F_total = 2 * sigma0 * A
+        eps     = F_total / ((E1 + E2) A)
+                = 2 sigma0 / ((2 - D1 - D2) E0)
 
-    Force control:
-        F_total = 2 * F0
-        eps     = F_total / ((E1 + E2) * A)
+    Note this is *not* an arbitrary doubling — it is the natural consequence
+    of specifying a per-bar stress sigma0 at the undamaged state.
 
     Displacement control:
         eps = eps_total
@@ -117,8 +153,8 @@ def compute_strains_parallel(D: np.ndarray, params: Params) -> np.ndarray:
     E2 = compute_effective_modulus(D[1], params.E0, params.E_min_ratio)
     A = params.A
 
-    if params.control == "force":
-        F_total = 2.0 * params.F0
+    if params.control == "stress":
+        F_total = params.F_parallel_total
         eps = F_total / ((E1 + E2) * A)
     else:
         eps = params.eps_total
