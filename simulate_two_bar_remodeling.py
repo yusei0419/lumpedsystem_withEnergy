@@ -32,7 +32,7 @@ def run_simulation_for_initial_condition(
     t_span=(0.0, 200.0),
     n_eval: int = 201,
 ) -> dict[str, np.ndarray]:
-    """Integrate one trajectory with solve_ivp."""
+    """Integrate one (D1, D2) trajectory with solve_ivp."""
     t_eval = np.linspace(t_span[0], t_span[1], n_eval)
 
     sol = solve_ivp(
@@ -46,10 +46,11 @@ def run_simulation_for_initial_condition(
         max_step=1.0,
     )
 
-    D_traj = np.clip(sol.y, params.D_min, params.D_max)  # cosmetic clip for plotting
+    # Clip for plotting only; the solver uses the unclipped state.
+    D_traj = np.clip(sol.y, params.D_min, params.D_max)
     t = sol.t
 
-    # Recompute strains/fluxes along trajectory for diagnostics
+    # Recompute strains/fluxes along the trajectory for diagnostics.
     strains = np.zeros_like(D_traj)
     Jd = np.zeros_like(D_traj)
     Jr = np.zeros_like(D_traj)
@@ -98,10 +99,12 @@ def run_grid_simulations(
 
 
 def main():
+    """Run the grid sweeps for several lambda values and save outputs."""
     here = os.path.dirname(os.path.abspath(__file__))
     out_dir = os.path.join(here, "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
+    # Base parameters shared across lambda values.
     base_params = Params(
         E0=1.0, A=1.0, L=1.0,
         b=1.0, alpha=1.0,
@@ -110,10 +113,12 @@ def main():
         D_grid=np.round(np.arange(0.0, 0.95, 0.1), 3),
     )
 
+    # Sweep repair stiffness values.
     lambda_values = [0.1, 1.0, 10.0]
     t_span = (0.0, 200.0)
     n_eval = 201
 
+    # Aggregate results keyed by mode and lambda.
     all_results: dict[str, dict[str, list]] = {"series": {}, "parallel": {}}
     for lam in lambda_values:
         params = Params(**{**asdict(base_params), "lam": lam})
@@ -125,6 +130,7 @@ def main():
             recs = run_grid_simulations(params, mode, t_span, n_eval)
             all_results[mode][f"{lam}"] = recs
 
+    # Store metadata + trajectories for post-processing.
     meta = {
         "params": {
             "E0": base_params.E0, "A": base_params.A, "L": base_params.L,
@@ -138,6 +144,7 @@ def main():
         "results": all_results,
     }
 
+    # Save JSON and render the interactive phase diagram.
     json_path = os.path.join(out_dir, "simulation_results.json")
     with open(json_path, "w") as f:
         json.dump(meta, f)

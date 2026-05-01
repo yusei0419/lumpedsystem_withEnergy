@@ -62,7 +62,7 @@ class Params:
 
 
 def compute_effective_modulus(D: np.ndarray | float, E0: float, E_min_ratio: float = 1e-4) -> np.ndarray:
-    """E_i = (1 - D_i) * E0, floored at E_min_ratio * E0 for numerical stability."""
+    """Return E_i = (1 - D_i) * E0 with a floor for stability."""
     E_eff = (1.0 - np.asarray(D)) * E0
     return np.maximum(E_eff, E_min_ratio * E0)
 
@@ -80,6 +80,7 @@ def compute_strains_series(D: np.ndarray, params: Params) -> np.ndarray:
                  = 2 eps_total * A / (1/E1 + 1/E2)
         eps_i    = F_series / (E_i * A)
     """
+    # Effective stiffness of each bar after damage.
     E1 = compute_effective_modulus(D[0], params.E0, params.E_min_ratio)
     E2 = compute_effective_modulus(D[1], params.E0, params.E_min_ratio)
     A, L = params.A, params.L
@@ -91,6 +92,7 @@ def compute_strains_series(D: np.ndarray, params: Params) -> np.ndarray:
         compliance = L / (E1 * A) + L / (E2 * A)
         F = delta_total / compliance
 
+    # Convert force to bar-wise strains.
     eps1 = F / (E1 * A)
     eps2 = F / (E2 * A)
     return np.array([eps1, eps2])
@@ -110,6 +112,7 @@ def compute_strains_parallel(D: np.ndarray, params: Params) -> np.ndarray:
     Displacement control:
         eps = eps_total
     """
+    # Effective stiffness of each bar after damage.
     E1 = compute_effective_modulus(D[0], params.E0, params.E_min_ratio)
     E2 = compute_effective_modulus(D[1], params.E0, params.E_min_ratio)
     A = params.A
@@ -137,6 +140,7 @@ def compute_fluxes(D: np.ndarray, strains: np.ndarray, params: Params) -> dict:
     b = params.b
     alpha = params.alpha
 
+    # Damage/repair kinetics derived from the free-energy gradients.
     Jd = alpha * 0.5 * E0 * strains ** 2
     Jr = alpha * lam * b ** 2 * np.asarray(D)
     Yd = 0.5 * E0 * strains ** 2 - lam * b ** 2 * np.asarray(D)
@@ -145,6 +149,7 @@ def compute_fluxes(D: np.ndarray, strains: np.ndarray, params: Params) -> dict:
 
 
 def _strains(D: np.ndarray, params: Params, mode: Mode) -> np.ndarray:
+    """Dispatch strain computation based on the bar configuration."""
     if mode == "series":
         return compute_strains_series(D, params)
     elif mode == "parallel":
@@ -159,7 +164,7 @@ def ode_rhs(t: float, D: np.ndarray, params: Params, mode: Mode) -> np.ndarray:
     fluxes = compute_fluxes(D, strains, params)
     dDdt = fluxes["dDdt"].copy()
 
-    # one-sided saturation: do not push past [D_min, D_max]
+    # One-sided saturation: do not push past [D_min, D_max].
     for i in range(2):
         if D[i] >= params.D_max and dDdt[i] > 0.0:
             dDdt[i] = 0.0
